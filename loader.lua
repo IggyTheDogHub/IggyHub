@@ -22,17 +22,44 @@ local GAMES = {
     ["GrowAChickenFighter"] = {
         Name = "Grow a Chicken Fighter",
         UniverseIds = { [10338952197] = true },
-        PlaceIds = { [94640181989498] = true },
+        PlaceIds = {
+            [94640181989498] = true,
+            [94939256104840] = true,
+        },
         ScriptPath = "chicken.lua"
     },
     -- Roll Anime to Fight!
     ["RollAnimeToFight"] = {
         Name = "Roll Anime to Fight!",
         UniverseIds = { [10298144467] = true },
-        PlaceIds = { [107653945083776] = true },
+        PlaceIds = {
+            [107653945083776] = true, -- Main Lobby / World
+            [133207600268474] = true, -- Red Knight's Dungeon (Raids)
+            [107431701292918] = true, -- Ant Kingdom (Chimera Raids)
+            [89230410866378]  = true, -- Clover Dungeon (Clover Portals)
+            [133623616308412] = true, -- Infinite Tower
+            [109743888989638] = true, -- Trading Hub
+            [139348108626702] = true, -- Modules
+        },
         ScriptPath = "ratf.lua"
+    },
+    -- Anime Dice
+    ["AnimeDice"] = {
+        Name = "Anime Dice",
+        UniverseIds = { [10708913337] = true },
+        PlaceIds = {
+            [113290951185459] = true,
+        },
+        ScriptPath = "dice.lua",
+        FallbackPaths = { "AnimeDice.lua", "animedice.lua" }
     }
 }
+
+-- Wait briefly for GameId to populate if 0 (common during fast teleports / autoexecute)
+local waitStart = tick()
+while (not game.GameId or game.GameId == 0) and (tick() - waitStart < 3) do
+    task.wait(0.1)
+end
 
 local currentGame = nil
 local currentPlaceId = game.PlaceId
@@ -40,7 +67,7 @@ local currentUniverseId = game.GameId
 
 -- Identify current game by UniverseId first (handles all subplaces), then PlaceId fallback
 for _, gameConfig in pairs(GAMES) do
-    if (currentUniverseId and gameConfig.UniverseIds[currentUniverseId]) or (currentPlaceId and gameConfig.PlaceIds[currentPlaceId]) then
+    if (currentUniverseId and gameConfig.UniverseIds[currentUniverseId]) or (currentPlaceId and gameConfig.PlaceIds and gameConfig.PlaceIds[currentPlaceId]) then
         currentGame = gameConfig
         break
     end
@@ -66,17 +93,35 @@ end
 
 -- Cache-busting parameter to ensure players always run the newest commit
 local cacheBust = "?v=" .. tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
-local scriptUrl = REPO_BASE .. currentGame.ScriptPath .. cacheBust
 
 notify("Iggy Hub", "Loading " .. currentGame.Name .. "...", 4)
 
-local fetchSuccess, scriptContent = pcall(function()
-    return game:HttpGet(scriptUrl)
-end)
+local candidatePaths = { currentGame.ScriptPath }
+if currentGame.FallbackPaths then
+    for _, fallback in ipairs(currentGame.FallbackPaths) do
+        table.insert(candidatePaths, fallback)
+    end
+end
+
+local fetchSuccess, scriptContent = false, nil
+local lastAttemptUrl = ""
+
+for _, path in ipairs(candidatePaths) do
+    local scriptUrl = REPO_BASE .. path .. cacheBust
+    lastAttemptUrl = scriptUrl
+    local ok, res = pcall(function()
+        return game:HttpGet(scriptUrl)
+    end)
+    if ok and res and #res > 0 and not res:find("404: Not Found") then
+        fetchSuccess = true
+        scriptContent = res
+        break
+    end
+end
 
 if not fetchSuccess or not scriptContent or #scriptContent == 0 then
-    warn("[Iggy Hub] Failed to download script from: " .. scriptUrl)
-    notify("Iggy Hub Error", "Failed to download script from GitHub. Check your connection.", 6)
+    warn("[Iggy Hub] Failed to download script from: " .. lastAttemptUrl)
+    notify("Iggy Hub Error", "Failed to download script from GitHub. Make sure the file exists.", 6)
     return
 end
 
